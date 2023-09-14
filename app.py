@@ -1,11 +1,13 @@
-from flask import Flask, render_template, request, redirect
+from flask import Flask, render_template, request, redirect, session, url_for
 import csv
 import io
 import openai 
+import os
 import tiktoken
 from datetime import datetime
 
 app = Flask(__name__)
+app.secret_key = os.urandom(12)
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
@@ -18,16 +20,47 @@ def index():
 
         # Check if the file has a CSV extension
         if file and file.filename.endswith('.csv'):
-            openai.api_key = request.form.get('apiKey')
+            api_key = os.getenv('API_KEY')
+            if api_key:
+                openai.api_key = api_key
+            else:
+                openai.api_key = request.form.get('apiKey')
 
             # Process the CSV file
             transactions = process_csv(file)
             context = generate_context(transactions, 3600)
-            suggestions = generate_savings_suggestions(context)
+            conversation.append({"role": "user", "content": context})
+            suggestions = generate_savings_suggestions(conversation)
 
-            return render_template('results.html', suggestions=suggestions)
+            session['commentary'] = [{'type': 'answer', 'text':suggestions}]
+
+            return redirect(url_for('results'))
 
     return render_template('index.html')
+
+@app.route('/results', methods=['GET', 'POST'])
+def results():
+    question = request.form.get('question')
+    commentary = session.get('commentary')
+    if request.method == 'POST' and question:
+        conversation.append({"role": "user", "content": question})
+        suggestions = generate_savings_suggestions(conversation)
+    
+        commentary = session.get('commentary')
+        commentary.append({'type': 'question', 'text':question})
+        commentary.append({'type': 'answer', 'text':suggestions})
+        session['commentary'] = commentary
+    return render_template('results.html', suggestions=commentary)
+
+# Initialize conversation context
+conversation = [
+    {"role": "system", "content": ' \
+        Analyze the following list of transactions where d = Date, c = Category, \
+        a = Amount, and t = Type. For Type, d = Debit and c = Credit. \nGenerate \
+        suggestions on ways that this person can save money. Provide practical advice \
+        to help me save money and make better financial decisions. Reference specific \
+        transaction descriptions in your response.'}
+]
 
 def process_csv(file):
     transactions = []
@@ -58,23 +91,20 @@ def process_csv(file):
 
 def generate_context(transactions, max_tokens):
     # Define the context for GPT-3.5
-    context = 'Analyze the following list of transactions where d = Date, c = Category, a = Amount, and t = Type. For Type, d = Debit and c = Credit.\n'
-    closing_line = 'Generate suggestions on ways that this person can save money. Provide practical advice to help me save money and make better financial decisions. Reference specific transaction descriptions in your response.'
-
+    context = ''
     for transaction in transactions:
         # Calculate the tokens required for this transaction and check if it exceeds the limit
         line = f"- d: {transaction['date']}, c: {transaction['category']}, a: {transaction['amount']}, t: {transaction['type']}\n"
-        current_tokens = calculate_transaction_tokens(context, line, closing_line)
+        current_tokens = calculate_transaction_tokens(context, line)
         if max_tokens >= current_tokens:
             context += line
         else:
             break
+    return context
 
-    return context + closing_line
-
-def calculate_transaction_tokens(context, line, closing_line):
-    # Combine the context, line, and closing_line into a single prompt string
-    prompt = f"{context}{line}{closing_line}"
+def calculate_transaction_tokens(context, line):
+    # Combine the context, and line into a single prompt string
+    prompt = f"{context}{line}"
 
     # Use tiktoken to count the tokens
     encoding = tiktoken.encoding_for_model("text-davinci-003")
@@ -82,18 +112,15 @@ def calculate_transaction_tokens(context, line, closing_line):
 
     return total_tokens
 
-def generate_savings_suggestions(prompt):
-    # Send a prompt to GPT-3.5 to generate savings suggestions
-    response = openai.Completion.create(
-        engine="text-davinci-003",
-        prompt=prompt,
-        n = 1,
-        max_tokens = 400,
-        stop=None,
+def generate_savings_suggestions(conversation):
+    # Call the API with the updated conversation context
+    response = openai.ChatCompletion.create(
+        model="gpt-3.5-turbo",
+        messages=conversation,
     )
 
-    # Extract and return the generated suggestions
-    suggestions = response.choices[0].text.strip().split('\n')
+    # Extract the AI's response to the question
+    suggestions = response.choices[0].message["content"]
     return suggestions
 
 if __name__ == '__main__':
