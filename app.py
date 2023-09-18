@@ -55,11 +55,12 @@ def results():
 # Initialize conversation context
 conversation = [
     {"role": "system", "content": ' \
-        Analyze the following list of transactions where d = Date, c = Category, \
-        a = Amount, and t = Type. For Type, d = Debit and c = Credit. \nGenerate \
-        suggestions on ways that this person can save money. Provide practical advice \
-        to help me save money and make better financial decisions. Reference specific \
-        transaction descriptions in your response.'}
+        Analyze the following list of transactions set up in this format:\n\
+        Date | Category | Amount | Type\n\
+        For Type, d = Debit and c = Credit.\n\
+        Generate suggestions on ways that this person can save money. Provide \
+        practical advice to help me save money and make better financial \
+        decisions. Reference specific transaction categories in your response.'}
 ]
 
 def process_csv(file):
@@ -94,7 +95,7 @@ def generate_context(transactions, max_tokens):
     context = ''
     for transaction in transactions:
         # Calculate the tokens required for this transaction and check if it exceeds the limit
-        line = f"- d: {transaction['date']}, c: {transaction['category']}, a: {transaction['amount']}, t: {transaction['type']}\n"
+        line = f"- {transaction['date']} | {transaction['category']} | {transaction['amount']} | {transaction['type']}\n"
         current_tokens = calculate_transaction_tokens(context, line)
         if max_tokens >= current_tokens:
             context += line
